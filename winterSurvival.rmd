@@ -1,0 +1,368 @@
+---
+title: "Good statistical practices for categorical data analysis (CDA) winter survival"
+author: "Zhanyou Xu & Ronald P Mowers"
+date: "Last compiled on `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+##  Outline of the analysis
+### 1. Test Normality with Shapiro.test
+### 2. Multi-way ANOVA with type I, II and III SS
+### 3. whole-split plot analysis 
+### 4. Generalized linear model (glm) with Gaussian distribution
+### 5. Generalized linear model (glm) with Poisson distribution
+### 6. Generalized linear model (glm) with binomial distribution
+### 7. Generalized linear mixed model (glmm) with Poisson distribution
+### 8. Generalized linear mixed model (glmm) with Binomial distribution
+### 9. Generalized linear mixed model (glmm) with whole-split plot analysis 
+
+###  Recommended model:treat Treatment and Cultivar as fixed effects, and plot, replicates as random effecs. glmer(standCount_all/1000~ (1|plot) + T *  C + (1|R), weights = n,data = p.data, family='binomial')
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(knitr)
+library(ggplot2)
+library(openxlsx)
+library(stringr)
+library(ggpmisc)
+library(ggpubr)
+library(agricolae)
+library(gvlma)
+library(rcompanion)
+library(lattice)
+library(car)
+
+# this is to setup the folder
+opts_knit$set("~/Box/Manuscripts/alfalfa/YU_Liqing_IGR/")
+
+```
+
+
+## Read in the winter survival data set for Phospher fertilizer treatment study
+
+```{r }
+
+p.data= read.xlsx("alfalfa_survival_data_confidential.xlsx")
+# convert cultivars 1 and 2 into "A", "B"
+p.data$cultivars= ifelse(p.data$cultivars==1, "A", "B")
+# convert the fertilizer into 0, 50, 100, and 150kg/acre fromm 1,2,3,4
+p.data$treatment= (as.numeric(as.character(p.data$treatment))-1)*50
+
+print(paste0('The data set has mean survival rate: ', mean(p.data$survivalRate), " from ", length(p.data$survivalRate)))
+
+print(paste0('The data set has mean survived plant count is: ', mean(p.data$standCount_all), " from ", length(p.data$survivalRate)))
+```
+
+## Define the parameters and their data type, range of the parameters 
+
+
+```{r}
+
+# C = cultivar (factor)
+# T = treatment (factor) based on applied phosphorus amount)
+# R = replication (factor)
+
+# P = fertilizer (kg/hectare) applied
+# Count = surviving plants (out of 1000)
+# S = proportion of surviving plants (Count/total plants(=1000))
+# Y: Y1, Y2, Y3 numerical response variable
+
+p.data$C= as.factor(as.character(p.data$cultivars))
+p.data$T= as.factor(as.character(p.data$treatment))
+p.data$R= as.factor(as.character(p.data$reps))
+p.data$plot= as.factor(as.character(p.data$plot))
+p.data$S= p.data$survivalRate
+p.data$count= p.data$standCount_all
+S= p.data$survivalRate
+Y3= p.data$cut_3
+Y1= p.data$cut_1
+Y2= p.data$cut_2
+
+
+```
+
+
+
+
+```{r, fig.height=6, fig.width=14}
+
+# check the distribution of the winter survival rates for all the data
+ggplot(p.data, aes(x=survivalRate))+
+  geom_histogram(fill='blue', bins = 10)
+
+# check the distribution of the winter survival rates by cultivars
+
+plot.by.cultivars=ggplot(p.data, aes(x=survivalRate, fill= cultivars))+
+  geom_histogram(bins =  10)+
+  facet_wrap(.~cultivars)
+print(plot.by.cultivars)
+
+# since treatment 1,2,3,4 stands for 0, 50, 100, and 150kg/acre of fertilizer, change the treatment to reflect the amount of fertilizer
+
+
+my_labels = c(0, 50,100,150)
+p_survival_rate=ggplot(p.data, aes(x= treatment, y= survivalRate*100))+
+  geom_point(cex=2.2,  aes(colour =cultivars))+
+  geom_smooth(method = "lm",formula = y~poly(x,2), se = TRUE, size=2)+
+  theme(
+    axis.title = element_text(size=15),
+    axis.text = element_text(size=15, colour = "dark blue"),
+    strip.text.x = element_text(size=15)
+    
+  )+ ylab("Survival Rate (%)")+  xlab("P fertilizer treatment (kg ha-1)")+
+  stat_poly_eq(aes(label =  paste(..eq.label.., sep = "~~~~")),
+               formula = y~poly(x,2, raw = TRUE), parse = TRUE)
+
+p_survival_rate_1=ggplot(p.data, aes(x= treatment, y= survivalRate*100))+
+  geom_point(cex=2.2)+
+  geom_smooth(method = "lm",formula = y~poly(x,2), se = TRUE, size=2)+
+  facet_grid(.~ cultivars, scales = 'free')+
+  theme(
+    axis.title = element_text(size=15),
+    axis.text = element_text(size=15, colour = "dark blue"),
+    
+    strip.text = element_text(size=15)
+    
+  )+ ylab("Survival Rate (%)")+  xlab("P fertilizer treatment (kg ha-1)") +
+  stat_poly_eq(aes(label =  paste(..eq.label.., sep = "~~~~")),
+               formula = y~poly(x,2, raw = TRUE), parse = TRUE)
+
+#  ..adj.rr.label..,
+
+# get the quadratic model coefficients
+quadratic_model <- lm(standCount_all~ treatment + I(treatment^2), data = p.data)
+summary(quadratic_model)
+
+# Get Y = 806.35 + 1.592 x - 0.0084 x^2, exactly the same as in JMP.x for the fertilizer treatment
+# For p-values, we would need to fit this model with C and R sources of variation removed.
+
+quadratic_model_RC <- lm(standCount_all~factor(reps)+factor(cultivars)+treatment+I(treatment^2), data = p.data)
+summary(quadratic_model_RC)
+# with reps and cultivars in the model, the p-value for the treatment is 0.0119 and for the quadratic treatment^2 is 0.0328, indicating the fertilizer treatment make significant difference.  This gives the same quadratic equation for P (treatment), but residual s.e.= 44.5 on 18 df.
+# It is a slightly different model from my JMP model with 14 df (3 for C:T and 1 P^3).
+
+
+ggarrange(p_survival_rate_1,p_survival_rate, nrow = 1, ncol = 3)
+
+```
+
+
+
+## Normality test with Shapiro test
+
+```{r}
+shapiro.test(p.data$survivalRate)
+
+# the survival rate of the data is normal with a p-value of 0.1217
+
+shapiro.test(p.data$count)
+
+# the survival count of survived plants is normal with a p-value of 0.122
+
+# KOLMOGOROV-SMIRNOV, ks test
+# The Kolmogorov D statistic is used to assess whether a random sample was drawn from a specified distribution. Although it is frequently used to test for normality, the statistic is "distribution free" in the sense that it compares the empirical distribution to any specified distribution. Link: https://blogs.sas.com/content/iml/2020/06/24/kolmogorov-d-distribution-exact.html#:~:text=The%20Kolmogorov%20D%20statistic%20is%20used%20to%20assess,compares%20the%20empirical%20distribution%20to%20any%20specified%20distribution.
+
+# The KS test is a non-parametric and distribution-free test: It makes no assumption about the distribution of data. The KS test is used to compare a sample with a reference probability distribution, or to compare two samples. The KS test is used to evaluate: Null Hypothesis: The samples do indeed come from P. link: https://r4dn.com/what-is-the-difference-between-kolmogorov-smirnov-and-shapiro-wilk-2/#:~:text=What%20is%20the%20difference%20between%20Kolmogorov-Smirnov%20and%20Shapiro-Wilk%3F,rejects%20the%20null%20hypothesis%20of%20normality%20less%20often%29.
+
+
+# Compare survival rate to a normal distribution
+ks.test(p.data$survivalRate, 'pnorm')
+# Compare survival plant counts to a Poisson distribution
+ks.test(p.data$standCount_all, 'ppois', lambda= mean(p.data$standCount_all))
+# Compare survival rate to a binomial distribution
+ks.test(p.data$survivalRate, 'pbinom', size=24, prob=mean(p.data$survivalRate))
+
+# Shapiro test--> normal
+# ks.test --> not normal, not binomial, close to Poisson distribution
+
+```
+
+<img src="type_1_2_3_SS_from_python_R_SAS.jpg" alt="Type I, II, & III Sum of Square" style="height: 600px; width:1000px;"/>
+
+![type I II III Sum of Square](type_1_2_3_SS_from_python_R_SAS.jpg "Type 1, 2, 3 SUm of squares")
+
+
+# image source: https://towardsdatascience.com/anovas-three-types-of-estimating-sums-of-squares-don-t-make-the-wrong-choice-91107c77a27a
+
+```{r}
+
+## type I SS, p-value changes with different order of the variables in the ANOVA. Type I SS are order-dependent (hierarchical) . Each effect is adjusted for all other effects that appear earlier in the model, but not for any effects that appear later in the model. 
+
+res_anova3_CTY= aov(S~ C + T + Y3 + R , data = p.data) 
+
+res_anova3_RYCT= aov(S~ R + Y3+ C + T , data = p.data) # use the p-values from this one by Ron
+summary(res_anova3_RYCT)
+anova(res_anova3_RYCT)
+
+summary(res_anova3_CTY) 
+anova(res_anova3_CTY)
+
+res_anova3_CYT= aov(S~ C  +  Y3 + T +R , data = p.data)
+summary(res_anova3_CYT) 
+
+res_anova3_TYC= aov(S~ T+  Y3 + C + R  , data = p.data)
+summary(res_anova3_TYC) 
+
+ANOVA_count_TYC= aov(standCount_all~ T+  Y3 + C  , data = p.data)
+summary(ANOVA_count_TYC) 
+
+
+
+## type II SS
+## type II SS are the reduction in the SSE as a result of
+## adding the effect to a model that contains all other
+## effects except effects that contain the effect being
+## tested. An effect is contained in another effect if
+## it can be derived by deleting terms in that effect.
+library(car) # to use the function Anova()
+res_anova3_CTY_type_II =Anova(lm(S ~ R + C  + T +  Y3 , data = p.data), type = "II")
+res_anova3_CTY_type_II
+
+## type III SS
+## Type III SS are identical to those of Type II SS when the design is balanced. When the design is unbalanced, these are the SS that are approximated by the traditional unweighted means ANOVA that uses harmonic mean sample sizes to adjust cell totals. 
+
+res_anova3_CTY_type_III =Anova(lm(S ~ R + C  + T +  Y3 , data = p.data), type = "III")
+res_anova3_CTY_type_III
+```
+
+## Whole-Split plot analysis
+
+```{r}
+# youtube resources: Split plot analysis, LSD test and plotting bar graphs using R
+# https://www.youtube.com/watch?v=sx5OdXlC8Y0
+
+# The whole treatment was P fertilization, the subplot treatments were cultivars
+
+model_whole_split_rate2= with(data = p.data, sp.plot(block = R, pplot = T, splot = C, Y = survivalRate))
+
+gla=model_whole_split_rate2$gl.a
+glb= model_whole_split_rate2$gl.b
+Ea= model_whole_split_rate2$Ea
+Eb= model_whole_split_rate2$Eb
+# LSD test for the 4 whole plot treatment
+LSD_test_mainTreatment= with(data = p.data, LSD.test(survivalRate, T, gla, Ea, console = TRUE))
+#LSD test for the subplot cultivar comparison
+LSD_test_SplitPlot= with(data = p.data, LSD.test(survivalRate, C, glb, Eb, console = TRUE))
+
+# LSD test for the combination or interaction
+LSD_test_Split_interaction= with(data = p.data, LSD.test(survivalRate, T:C, glb, Eb, console = TRUE))
+
+# by using regression analysis: link: http://www.personal.psu.edu/mar36/stat_461/split_plot/split_plot.html
+regression_good= aov(survivalRate~ T *  C + Error(R:T), data = p.data)
+summary(regression_good)
+
+
+```
+
+## Summary, treatment 2 and 3 significant than 1, treatment 4 is not significant from 1.
+
+
+
+## Generalized linear model (GLM) with Poisson distribution
+### reason to choose Poisson distribution: counts of the survival plants
+
+```{r}
+
+model_glm_Poisson = glm(standCount_all~R +  C * T , data = p.data, family =poisson(link = "log" ))
+summary(model_glm_Poisson)
+
+```
+
+## Generalized linear model (GLM) with Gaussian distribution
+## reason to choose Gaussian distribution. Large sample size 
+
+```{r}
+res_glm_gaussian_reps_123= glm(survivalRate~ R + C  + T   , 
+                               data = p.data, family = gaussian(link="identity"))
+summary(res_glm_gaussian_reps_123)
+
+glm_Gaussian_Y3= glm(survivalRate~ R + C  + T  +Y3 , 
+                               data = p.data, family = gaussian(link="identity"))
+summary(glm_Gaussian_Y3)
+
+```
+
+## Generalized linear model (GLM) with binomial distribution
+## reason to choose multinomial distribution: each plant has two options, die or survive, and we have study 1,000 individual plants
+
+```{r}
+# reference 1: https://stats.stackexchange.com/questions/141412/r-glm-function-with-family-binomial-and-weight-specification
+# reference 2: https://wikimho.com/us/q/stats/141412
+
+#  "For a binomial GLM prior weights are used to give the number of trials when the response is the proportion of successes" 
+#w= 1:length(p.data$standCount_all)
+p.data$n= 1000
+model_glm_binomial = glm(standCount_all/n ~R +  C * T ,weights = n, data = p.data, family =binomial)
+
+model_glm_binomial = glm(standCount_all/n ~R +  C * T ,weights = n, data = p.data, family =binomial)
+summary(model_glm_binomial)
+
+```
+
+# Generalized linear mixed model (GLMM) with Poisson distribution for counts of the survived plants
+
+```{r}
+library(lme4)
+glmm_ws_1=glmer(standCount_all ~ (1|R) + (1|C) + (1|cut_3) + T,  data = p.data, family = poisson(link = "log"))
+
+summary(glmm_ws_1) 
+
+glmm_ws_2=glmer(standCount_all ~ (1|R) + C + (1|cut_3) + T,  data = p.data, family = poisson(link = "log"))
+
+summary(glmm_ws_2)
+
+```
+
+## Generalized linear mixed model (GLMM) with Gaussian distribution for suvival rate
+## check with Ron why the binomial DID NOT work?
+```{r}
+library(lme4)
+# reference link: https://data.library.virginia.edu/getting-started-with-binomial-generalized-linear-mixed-models/#:~:text=Binomial%20Generalized%20Linear%20Mixed%20Models%2C%20or%20binomial%20GLMMs%2C,whether%20or%20not%20they%20eat%20vegetables%20each%20day.Getting Started with Binomial Generalized Linear Mixed Models
+
+glmm_ws_Binomial=glmer(standCount_all/1000 ~  (1|C) + (1|R) + T,  
+                       weights = n,
+                       data = p.data, family = 'binomial')
+
+summary(glmm_ws_Binomial)
+
+# add plot as a random term in the model to estimate plot error  
+glmm_ws_Binomial_plot=glmer(standCount_all/1000 ~ (1|plot)+  (1|C) + (1|R) + T,  
+                       weights = n,
+                       data = p.data, family = 'binomial')
+
+summary(glmm_ws_Binomial_plot)
+
+```
+
+## 8.Generalized linear mixed model with whole-split plot analysis 
+
+
+```{r}
+library(lmerTest)
+library(lme4)
+# resources link: https://stat.ethz.ch/~meier/teaching/anova/split-plot-designs.html
+model_ws_lmer= glmer(standCount_all~ T *  C + (1|R), data = p.data, family='poisson')
+summary(model_ws_lmer)
+
+# add plot as a random term in the model to estimate plot error  
+
+model_ws_lmer_plot= glmer(standCount_all~ (1|plot) + T *  C + (1|R), data = p.data, family='poisson')
+summary(model_ws_lmer_plot)
+
+# add plot as a random term in the Binomial model to estimate plot error,
+# **** recommended model
+
+model_ws_lmer_plot_binomial= glmer(standCount_all/1000~ (1|plot) + T *  C + (1|R), 
+                           weights = n,data = p.data, family='binomial')
+summary(model_ws_lmer_plot_binomial)
+
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -1,0 +1,270 @@
+---
+title: "Good statistical practices in agronomy using categorical data analysis, with two alfalfa examples"
+author: "Zhanyou Xu & Ronald P Mowers"
+date: "Last compiled on `r format(Sys.time(), '%d %B, %Y')`"
+output:
+  word_document: default
+  html_document: default
+---
+# Outline of the analysis
+## 1. T-test (treat the data as iid with Gaussian distribution)
+## 2. One-way ANOVA
+## 3. Transform the data with square root and log, and normality test
+## 4. ANOVA of mean of the nodule and square root nodules (add***) based on central limit theorem 
+## 5. Multi-way ANOVA with type I, II and III SS
+## 6. Generalized linear model (glm) with Poisson distribution
+  + ### glm simple model with cultivar by nodule numbers (not recommended)
+  + ### glm complicated model including Cultivar, Inoculum, and Time by nodule numbers
+  + ### glm simple model with cultivar by square root of nodule numbers
+  + ### glm complicated model including Cultivar, Inoculum, and Time by square root of nodule numbers
+
+## 7. Generalized linear mixed model (glmm) with Poisson distribution
+  + ### glmm1, cultivar as fixed, Time and Inoculum as random effects
+  + ### glmm2, cultivar and inoculum are fixed, and Time as random effects
+  + ### glmm3, cultivar and inoculum are fixed, and Time and pot as random effects (recommended)
+
+## recommended model: glmer with cultivar and Innoculm as fixed effects, and pot and time as random effects. glmer(Nodules ~ Cultivar + (1|pot)+ (1|Time) + Inoculum ,    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+
+
+      
+    
+```{r setup, include=FALSE}
+require("knitr")
+# this is to setup the folder
+opts_knit$set(root.dir = "~/Box/Manuscripts/alfalfa/Bruna_RootData/Nodulation/")
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Code chunk 1: Load libraries and read in the nodulation data
+```{r}
+
+library(tidyverse); library(ggplot2)
+library(openxlsx)
+getSheetNames("Stats_nodules.xlsx")
+# use the original data
+noduleSD=  read.xlsx("Stats_nodules.xlsx", sheet = "SAS editor_ZX", startRow = 7, na.strings = c(" ", "."))
+dim(noduleSD)
+table(noduleSD$Cultivar, noduleSD$Inoculum)
+print(paste0("The mean of the data is ", mean(noduleSD$Nodules), " from ", length(noduleSD$Nodules), " data points"))
+```
+
+## Code chunk 2: Visualize the data
+
+```{r pressure, echo=FALSE}
+noduleSD$Cultivar= as.factor(as.character(noduleSD$Cultivar))
+noduleSD$pot= as.factor(as.character(noduleSD$pot))
+
+ggplot(noduleSD, aes(x= Cultivar, y=Nodules, fill=Cultivar ))+
+  geom_boxplot()+
+  geom_jitter()
+```
+## Over-simplified first analyses can give misleading first impressions 
+## with t.test for the nodulate data
+
+```{r}
+Cultivar_3233= noduleSD[noduleSD$Cultivar=="3233",]
+Cultivar_3234= noduleSD[noduleSD$Cultivar=="3234",]
+
+t.test(Cultivar_3233$Nodules, Cultivar_3234$Nodules, 
+alternative = "two.sided", paired = F, var.equal = F)
+```
+## conlusion from the T test: there is no significant differences between the two clutivars for the N modulation since the p-value of 0.187 > 0.04. 
+
+## Code chunk 3:Check normality of the data
+
+```{r}
+library(cowplot); library(ggpubr)
+shapiro.test(noduleSD$Nodules)
+shapiro.test(Cultivar_3233$Nodules)
+shapiro.test(Cultivar_3234$Nodules)
+# noduleSD$NodulesN= noduleSD$Nodules/max(noduelsD$Nodules)
+
+ggplot(noduleSD, aes(x= Nodules, fill=Cultivar))+
+  geom_histogram() +
+  facet_grid(.~ Cultivar) +
+ #   stat_density(geom="line")+
+  ggtitle("Distribution with orginal nodule data")
+
+ggplot(noduleSD, aes(x= sqrtNod, fill=Cultivar))+
+  geom_histogram() +
+  facet_grid(.~ Cultivar) +
+  ggtitle("Distribution with square root nodule data")
+
+# Normality test after square root transformation
+shapiro.test(noduleSD$sqrtNod)
+shapiro.test(Cultivar_3233$sqrtNod)
+shapiro.test(Cultivar_3234$sqrtNod)
+
+# normality test after log trasnformation
+(shapiro.test(noduleSD$LogNod))
+(shapiro.test(Cultivar_3233$LogNod))
+shapiro.test(Cultivar_3234$LogNod)
+
+
+```
+
+
+## Code chunk 4: Conduct one-way ANOVA
+
+
+```{r}
+# aov(), anova() vs Anova()
+## aov fits a model (internally it calls lm), so it produces regression coefficients, fitted values, residuals, etc; It produces an object of primary class "aov" but also a secondary class "lm". So, it is an augmentation of an "lm" object.
+## anova() is a generic function, which analyses a fitted model (produced by lm or aov), producing type I (sequential) ANOVA table.
+## anova is a function in base R. Anova is a function in the car package.
+## anova() calculates type I tests, that is, each variable is added in sequential order. 
+## Anova() calculates type II or III tests. Type II tests test each variable after all the others. For details, see ?Anova.
+model_nodule= lm(Nodules ~ Cultivar, data=noduleSD )
+anova(lm(Nodules ~ Cultivar, data=noduleSD )) 
+# with type I sum of square 
+
+library(car)
+Anova(model_nodule, type = 'III')
+# since there is ONLY one factor, and there is no order, this Type I, II and III are all the same results
+
+
+```
+## Code chunk 5: Conduct multi-way ANOVA analysis
+
+```{r, echo=TRUE}
+# change variables into factor for ANOVA
+noduleSD$Time= as.factor(as.character(noduleSD$Time))
+noduleSD$Inoculum= as.factor(as.character(noduleSD$Inoculum))
+# for Tipe I SS with cultivar in the beginning of the model
+anova(lm(Nodules ~ Time*Cultivar*Inoculum, data = noduleSD))
+
+# for Tipe I SS with cultivar at the end of the model
+anova(lm(Nodules ~ Time*Inoculum*Cultivar, data = noduleSD))
+# you will notice the difference p-values from above two Type I SS due to the order of the variables in the model
+
+# for Type II SS
+Anova(lm(Nodules~ Time*Cultivar*Inoculum, data = noduleSD), type = 'II')
+# for Tyep III SS
+Anova(lm(Nodules~ Time*Cultivar*Inoculum, data = noduleSD), type = 'III')
+
+# since there is no signifcant interaction between cultivars and other factors, Type II is better
+```
+# SUMMARY
+## 1-- Usually the hypothesis of interest is about the significance of one factor while controlling for the level of the other factors. If the data are unbalanced, this equates to using type II or III SS. -->
+## 2 -- In general, if there is no significant interaction effect, then type II is more powerful, and follows the principle of marginality. -->
+## 3 -- If interaction is present, then type II is inappropriate while type III can still be used, but results need to be interpreted with caution (in the presence of interactions, main effects are rarely interpretable). -->
+
+# Conclusion from multiple-ANOVA analysis: either Type I or II SS should be used for the analsys and p-value of 0.031233 (Type I SS) and p-value of 0.032729 (Type II SS)
+
+
+## Code chunk 6: Use the square root transformed the data for the ANOVA
+
+```{r, echo=TRUE}
+# change variables into factor for ANOVA
+noduleSD$Time= as.factor(as.character(noduleSD$Time))
+noduleSD$Inoculum= as.factor(as.character(noduleSD$Inoculum))
+# for Tipe I SS
+anova(lm(sqrtNod ~ Time*Cultivar*Inoculum, data = noduleSD))
+# for Type II SS
+Anova(lm(sqrtNod~ Time*Cultivar*Inoculum, data = noduleSD), type = 'II')
+# for Tyep III SS
+Anova(lm(sqrtNod~ Time*Cultivar*Inoculum, data = noduleSD), type = 'III')
+
+# use the average nodules for ANOVA
+# get means from all the replicates, then conduct one-way ANOVA
+mean_sqrt_df=noduleSD%>%
+group_by(Cultivar, Inoculum, Time )%>%
+  summarise(av1= mean(Nodules), sqrt1= sqrt(av1))
+shapiro.test(mean_sqrt_df$av1) 
+
+names(mean_sqrt_df)[grep('Inoculum', names(mean_sqrt_df))]= 'Rhizobium'
+
+# ANOVA for mean nodules
+model_mean_Nodules= lm(av1 ~  Rhizobium + Time + Cultivar, data=mean_sqrt_df )
+anova(model_mean_Nodules) # with type I sum of square 
+
+# ANOVA for the square root of the mean nodules
+model_sqrt_mean_Nodules= lm(sqrt1 ~  Rhizobium + Time + Cultivar, data=mean_sqrt_df )
+anova(model_sqrt_mean_Nodules) # with type I sum of square 
+
+
+
+```
+## Code chunk 7: Generalized linear models (GLM) for count data: Poisson regression
+
+```{r}
+library(tidyverse)
+library(lmerTest)
+library(knitr)
+library(broom)
+ Poisson.model.simple <- noduleSD %>% 
+   glm(Nodules ~ Cultivar, family = poisson, data = .)
+Poisson.model.simple%>%
+ broom::tidy()
+
+Poisson.model_c= noduleSD%>%
+  glm(Nodules~  Inoculum*Time* Cultivar, family = poisson, data = .)%>%
+  broom::tidy()
+Poisson.model_c
+
+
+Poisson.model_c= noduleSD%>%
+  glm(Nodules~  Inoculum +Time + Cultivar, family = poisson, data = .)%>%
+  broom::tidy()
+Poisson.model_c
+
+# generalize linear simple model with square root nodule number
+## since poisson distribution needs integer, round the square root to integers
+noduleSD$sqrtNodUP= round(noduleSD$sqrtNod, 0)
+ Poisson.model.simple.sqrt <- noduleSD %>% 
+   glm(sqrtNodUP ~ Cultivar, family = poisson, data = .)
+Poisson.model.simple.sqrt%>%
+ broom::tidy()
+
+
+# generalize linear complex model with square root nodule number
+
+Poisson.model_c= noduleSD%>%
+  glm(sqrtNodUP~ Cultivar * Inoculum*Time, family = poisson, data = .)%>%
+  broom::tidy()
+Poisson.model_c
+
+```
+# Summary from Poisson distribution: no matter simple or complicated model, both tests are significant. Comparing with the simple t-test, we believe that analyzing the data with Poisson distributioonprovides better results than that of t-test.  
+
+
+## Code chunk 8: Generalized linear mixed model (GLMM) for count data
+
+```{r}
+library(lme4)
+glmm_posisson=glmer(Nodules ~ Cultivar + (1|Time) + (1|Inoculum) + (1|Inoculum/Time),
+    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+summary(glmm_posisson)
+
+# treat cultivar as random
+glmm_posisson_ron=glmer(Nodules ~ (1|Cultivar) + (1|Time) + (1|Inoculum) + (1|Inoculum/Time),
+    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+summary(glmm_posisson_ron)
+
+# treat time as random effects, 
+glmm_posisson2=glmer(Nodules ~ Cultivar + (1|Time) + Inoculum + (1|Inoculum/Time),
+    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+summary(glmm_posisson2)
+
+
+# as pot as random term to estimate the pot error
+glmm_posisson2_pot=glmer(Nodules ~ Cultivar + (1|pot)+ (1|Time) + Inoculum + (1|Inoculum/Time),    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+summary(glmm_posisson2_pot)
+
+
+# remove Inoculum/time since it is over fitted, this is *** recommended model***.  
+# we also removed the interaction between Cultivar:Innoculum since its variance is small. to show the interaction between cultivars and Inoculm. But we have removed the interaction since it is not significant
+glmm_posisson2_pot_no_inoculum=glmer(Nodules ~ Cultivar*Inoculum + (1|pot)+ (1|Time)  ,    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+summary(glmm_posisson2_pot_no_inoculum)
+
+# final model 
+glmm_posisson3_pot_no_inoculum=glmer(Nodules ~ Cultivar + Inoculum + (1|pot)+ (1|Time)  ,    data = noduleSD, family = poisson(link = "log"))  # Poisson distribution
+summary(glmm_posisson3_pot_no_inoculum)
+
+```
+# Summary: Overall, generalized linear mixed model fits the data the best. Breeders and reseraches can use it as needed for the data according to different distribution. 
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
